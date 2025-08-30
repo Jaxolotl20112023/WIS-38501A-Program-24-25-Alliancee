@@ -1,0 +1,373 @@
+#pragma region VEXcode Generated Robot Configuration
+// Make sure all required headers are included.
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <math.h>
+#include <string.h>
+
+
+#include "vex.h"
+
+using namespace vex;
+
+// Brain should be defined by default
+brain Brain;
+
+
+// START V5 MACROS
+#define waitUntil(condition)                                                   \
+  do {                                                                         \
+    wait(5, msec);                                                             \
+  } while (!(condition))
+
+#define repeat(iterations)                                                     \
+  for (int iterator = 0; iterator < iterations; iterator++)
+// END V5 MACROS
+
+
+// Robot configuration code.
+motor leftMotorA = motor(PORT17, ratio18_1, false);
+motor leftMotorB = motor(PORT16, ratio18_1, false);
+motor_group LeftDriveSmart = motor_group(leftMotorA, leftMotorB);
+motor rightMotorA = motor(PORT19, ratio18_1, true);
+motor rightMotorB = motor(PORT18, ratio18_1, true);
+motor_group RightDriveSmart = motor_group(rightMotorA, rightMotorB);
+inertial DrivetrainInertial = inertial(PORT6);
+smartdrive Drivetrain = smartdrive(LeftDriveSmart, RightDriveSmart, DrivetrainInertial, 319.19, 320, 40, mm, 1);
+
+motor SwingArm = motor(PORT1, ratio36_1, true);
+
+rotation RotationSens = rotation(PORT8, false);
+
+motor Intake = motor(PORT20, ratio18_1, false);
+
+controller Controller1 = controller(primary);
+digital_out Clamp = digital_out(Brain.ThreeWirePort.H);
+/*vex-vision-config:begin*/
+vision::signature VisionSens__RED_RING = vision::signature (1, 4477, 7521, 5999,-365, 857, 246,2.5, 0);
+vision VisionSens = vision (PORT21, 10, VisionSens__RED_RING);
+/*vex-vision-config:end*/
+limit Conveyor_Switch = limit(Brain.ThreeWirePort.A);
+motor ConveyorMotorA = motor(PORT2, ratio18_1, false);
+motor ConveyorMotorB = motor(PORT10, ratio18_1, true);
+motor_group Conveyor = motor_group(ConveyorMotorA, ConveyorMotorB);
+
+
+
+// generating and setting random seed
+void initializeRandomSeed(){
+  int systemTime = Brain.Timer.systemHighResolution();
+  double batteryCurrent = Brain.Battery.current();
+  double batteryVoltage = Brain.Battery.voltage(voltageUnits::mV);
+
+  // Combine these values into a single integer
+  int seed = int(batteryVoltage + batteryCurrent * 100) + systemTime;
+
+  // Set the seed
+  srand(seed);
+}
+
+bool vexcode_initial_drivetrain_calibration_completed = false;
+void calibrateDrivetrain() {
+  wait(200, msec);
+  Brain.Screen.print("Calibrating");
+  Brain.Screen.newLine();
+  Brain.Screen.print("Inertial");
+  DrivetrainInertial.calibrate();
+  while (DrivetrainInertial.isCalibrating()) {
+    wait(25, msec);
+  }
+  vexcode_initial_drivetrain_calibration_completed = true;
+  // Clears the screen and returns the cursor to row 1, column 1.
+  Brain.Screen.clearScreen();
+  Brain.Screen.setCursor(1, 1);
+}
+
+void vexcodeInit() {
+
+  // Calibrate the Drivetrain
+  calibrateDrivetrain();
+
+  //Initializing random seed.
+  initializeRandomSeed(); 
+}
+
+
+// Helper to make playing sounds from the V5 in VEXcode easier and
+// keeps the code cleaner by making it clear what is happening.
+void playVexcodeSound(const char *soundName) {
+  printf("VEXPlaySound:%s\n", soundName);
+  wait(5, msec);
+}
+
+
+
+// define variable for remote controller enable/disable
+bool RemoteControlCodeEnabled = true;
+// define variables used for controlling motors based on controller inputs
+bool DrivetrainLNeedsToBeStopped_Controller1 = true;
+bool DrivetrainRNeedsToBeStopped_Controller1 = true;
+
+// define a task that will handle monitoring inputs from Controller1
+int rc_auto_loop_function_Controller1() {
+  // process the controller input every 20 milliseconds
+  // update the motors based on the input values
+  while(true) {
+    if(RemoteControlCodeEnabled) {
+      // stop the motors if the brain is calibrating
+      if (DrivetrainInertial.isCalibrating()) {
+        LeftDriveSmart.stop();
+        RightDriveSmart.stop();
+        while (DrivetrainInertial.isCalibrating()) {
+          wait(25, msec);
+        }
+      }
+      
+      // calculate the drivetrain motor velocities from the controller joystick axies
+      // left = Axis3
+      // right = Axis2
+      int drivetrainLeftSideSpeed = Controller1.Axis3.position();
+      int drivetrainRightSideSpeed = Controller1.Axis2.position();
+      
+      // check if the value is inside of the deadband range
+      if (drivetrainLeftSideSpeed < 5 && drivetrainLeftSideSpeed > -5) {
+        // check if the left motor has already been stopped
+        if (DrivetrainLNeedsToBeStopped_Controller1) {
+          // stop the left drive motor
+          LeftDriveSmart.stop();
+          // tell the code that the left motor has been stopped
+          DrivetrainLNeedsToBeStopped_Controller1 = false;
+        }
+      } else {
+        // reset the toggle so that the deadband code knows to stop the left motor nexttime the input is in the deadband range
+        DrivetrainLNeedsToBeStopped_Controller1 = true;
+      }
+      // check if the value is inside of the deadband range
+      if (drivetrainRightSideSpeed < 5 && drivetrainRightSideSpeed > -5) {
+        // check if the right motor has already been stopped
+        if (DrivetrainRNeedsToBeStopped_Controller1) {
+          // stop the right drive motor
+          RightDriveSmart.stop();
+          // tell the code that the right motor has been stopped
+          DrivetrainRNeedsToBeStopped_Controller1 = false;
+        }
+      } else {
+        // reset the toggle so that the deadband code knows to stop the right motor next time the input is in the deadband range
+        DrivetrainRNeedsToBeStopped_Controller1 = true;
+      }
+      
+      // only tell the left drive motor to spin if the values are not in the deadband range
+      if (DrivetrainLNeedsToBeStopped_Controller1) {
+        LeftDriveSmart.setVelocity(drivetrainLeftSideSpeed, percent);
+        LeftDriveSmart.spin(forward);
+      }
+      // only tell the right drive motor to spin if the values are not in the deadband range
+      if (DrivetrainRNeedsToBeStopped_Controller1) {
+        RightDriveSmart.setVelocity(drivetrainRightSideSpeed, percent);
+        RightDriveSmart.spin(forward);
+      }
+    }
+    // wait before repeating the process
+    wait(20, msec);
+  }
+  return 0;
+}
+
+task rc_auto_loop_task_Controller1(rc_auto_loop_function_Controller1);
+
+#pragma endregion VEXcode Generated Robot Configuration
+
+// ----------------------------------------------------------------------------
+//                                                                            
+//    Project:                                               
+//    Author:
+//    Created:
+//    Configuration:        
+//                                                                            
+// ----------------------------------------------------------------------------
+
+// Include the V5 Library
+#include "vex.h"
+
+// Allows for easier use of the VEX Library
+using namespace vex;
+
+// Begin project code
+
+void preAutonomous(void) {
+  // actions to do when the program starts
+  Brain.Screen.clearScreen();
+  Brain.Screen.print("pre auton code");
+  wait(1, seconds);
+}
+
+void ClampDown() {
+  Clamp.set(true);
+}
+
+void ClampUp() {
+  Clamp.set(false); 
+}
+
+bool switch_arm_intake(bool switchButton) {
+  switchButton = !switchButton; 
+  return switchButton; 
+}
+
+
+void intake_and_arm(bool switchButton) {
+  if (Controller1.ButtonR1.pressing() == true && switchButton == false) {
+      Intake.spin(forward);
+    } else if (Controller1.ButtonR1.pressing() == false && switchButton == false) {
+      if (Controller1.ButtonR2.pressing() == true && switchButton == false) {
+        Intake.spin(reverse); 
+      } else {
+        Intake.stop();
+      } 
+
+  }
+
+  if (Controller1.ButtonR1.pressing() == true && switchButton == true){
+      SwingArm.spin(forward); 
+    } else if (Controller1.ButtonR1.pressing() == false && switchButton == true){
+      if (Controller1.ButtonR2.pressing() == true) {
+        SwingArm.spin(reverse); 
+      } else {
+        SwingArm.stop(); 
+      }
+    }
+}
+
+
+
+
+void autonomous(void) {
+  Brain.Screen.clearScreen();
+  Brain.Screen.print("autonomous code");
+  // place automonous code here
+}
+
+void userControl(void) {
+  Brain.Screen.clearScreen();
+  // place driver control in this while loop
+  Conveyor.setVelocity(100, percent); 
+  SwingArm.setVelocity(60, percent); 
+  Intake.setVelocity(100, percent); 
+  Drivetrain.setDriveVelocity(100, percent);
+  Drivetrain.setTurnVelocity(100, percent); 
+
+  Conveyor.setPosition(0,degrees); 
+  SwingArm.setPosition(0, degrees); 
+  RotationSens.setPosition(0,degrees);
+  SwingArm.setStopping(hold); 
+  bool redEvent = false; 
+  bool activate = false;
+  int number_of_object;  
+  bool buttonXState = false; 
+  bool State = false;
+
+  //bool store_objects[3];
+
+  while (true) {
+    Controller1.ButtonUp.pressed(ClampUp);
+    Controller1.ButtonDown.pressed(ClampDown); 
+
+    //CHECKS WHEN BUTTON X IS RELEASED
+    if (!Controller1.ButtonX.pressing() && buttonXState) {
+      State = switch_arm_intake(buttonXState); //CALLS AND ASSIGNS THE FUNC THAT WILL TOGGLE BUTTONX ON AND OFF
+      buttonXState = false;             //SETS THE STATE BACK TO FALSE
+      intake_and_arm(State);           //CHECKS IF THE R2 OR R1 IS PRESSED AND SWITCHES BETWEEN ARM AND INTAKE
+    }
+    if (Controller1.ButtonX.pressing() == true){
+      if (buttonXState == false) {
+        intake_and_arm(true);           //CHECKS IF THE R2 OR R1 IS PRESSED AND SWITCHES BETWEEN ARM AND INTAKE
+      }
+      buttonXState = true;              //SETS THE STATE BACK TO TRUE
+    } else {
+      intake_and_arm(State);           //CHECKS IF THE R2 OR R1 IS PRESSED AND SWITCHES BETWEEN ARM AND INTAKE
+    }
+
+
+    //STARTS SCANNING AND MOVING THE CONVEYOR TO FIND RED RINGS
+    if (Controller1.ButtonL1.pressing() == true && Controller1.ButtonL2.pressing() == false && redEvent == false)  {
+      Conveyor.spin(forward);           //SPINS CONVEYOR IN REVERSE WHEN PRESSING L1
+      Brain.Screen.print("REVERSE :0");
+    } else if (Controller1.ButtonL1.pressing() == false && Controller1.ButtonL2.pressing() == true && redEvent == false) {
+      Conveyor.spin(reverse);           //SPINS CONVEYOR FORWARD WHEN PRESSING L2
+      VisionSens.takeSnapshot(VisionSens__RED_RING); //TAKES A SNAPSHOT OF THE AREA TO CHECK IF THERE ARE ANY RED RINGS
+    } else {
+      Conveyor.stop();                  //IF NEITHER BUTTONS ARE BEING PRESSED IT WILL STOP AND RESET THE REDEVENT TO FALSE
+      Brain.Screen.print("STOP"); 
+      redEvent = false;
+      VisionSens.takeSnapshot(VisionSens__RED_RING); //IT WILL TAKE A SNAPSHOT TO HAVE A CONTINOUS UP
+
+    }
+    Brain.Screen.clearScreen(); 
+
+    //if see the ring, tell the code I saw the ring
+    if (VisionSens.largestObject.width >= 60 && redEvent == false) {
+      redEvent = true;
+      number_of_object++; 
+    }
+
+    //WHEN IT SEES A RED RING AND L2 IS BEING PRESSED IT WILL ACTIVATE THE FLIPPING PART
+    if (redEvent == true && Controller1.ButtonL2.pressing() && !Controller1.ButtonL1.pressing()){
+      Brain.Screen.print("SEE RED & FLING");
+      while (!Conveyor_Switch.pressing()) {        //CHECKS IF THE LIMIT SWITCH IS BEING PRESSED (N -> CONVEYOR REVERSE, Y, GET READY TO FLING)
+          Conveyor.spin(reverse);
+        }
+        Brain.Screen.print("CLICK"); 
+        if (activate == false) {                   //CHECKS IF THE DISABLEDED SAFTEY SWITCH IS ON
+          Brain.Screen.print("RED SAW");           //WAITS 0.49 SECONDS, THE TIME THE RING TAKES TO REACH THE TOP
+            wait(0.49, seconds);                   //STOPS AFTER 0.49 SECONDS
+            Conveyor.stop();                
+            wait(1, seconds);                      //WAIT 1 SECOND BEFORE RE-ACTIVATING THE CONVEYOR
+            redEvent = false;                      //RESET THE REDEVENT BACK TO FALSE
+            number_of_object = 0; 
+            Brain.Screen.newLine(); 
+            Brain.Screen.print("RED THROUGH");
+          
+        }
+    }
+
+
+    // // if intaking  and it saw the ring,
+    // //do the fling sequence
+    // if ((Controller1.ButtonL2.pressing() == true && Controller1.ButtonL1.pressing() == false) && redEvent == true) {
+    //     while (!Conveyor_Switch.pressing()) {
+    //       Conveyor.spin(reverse);
+    //     }
+    //     if (activate == false) {
+    //       Brain.Screen.print("RED SAW");
+    //       wait(0.5, seconds); 
+    //       Conveyor.stop();
+    //       wait(0.5, seconds); 
+    //       redEvent = false;
+    //       Brain.Screen.newLine(); 
+    //       Brain.Screen.print("RED THROUGH"); 
+    //     }
+    // }
+    wait(10, msec);
+  }
+}
+
+int main() {
+  // Initializing Robot Configuration. DO NOT REMOVE!
+  vexcodeInit();
+  // create competition instance
+  competition Competition;
+
+  // Set up callbacks for autonomous and driver control periods.
+  Competition.autonomous(autonomous);
+  Competition.drivercontrol(userControl);
+
+  // Run the pre-autonomous function.
+  preAutonomous();
+
+  // Prevent main from exiting with an infinite loop.
+  while (true) {
+    userControl(); 
+    wait(20, msec);
+  }
+}
